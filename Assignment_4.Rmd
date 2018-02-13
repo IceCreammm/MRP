@@ -1,0 +1,339 @@
+---
+title: "Assignment_4"
+author: "Juntao Zhang"
+date: "2017/4/5"
+output: html_document
+---
+
+```{r}
+library(PerformanceAnalytics)
+library(quantmod)
+library(rugarch)
+library(car)
+library(FinTS)
+library(tseries)
+
+symbol <- c("AMZN")
+
+getSymbols(symbol,from ="2010-01-01", to = "2017-04-04")
+
+amzn <- AMZN[, "AMZN.Adjusted"]
+
+
+plot(amzn)  # time series plot of your data without doing any transformation.
+
+# set up the training set 
+
+amzn_train <- amzn[-(1777:1826)]         # this is the training set for analyzing 
+
+plot(amzn_train,main = "daily returns amazon")
+
+
+# calculate log-returns for GARCH analysis
+
+amzn.ret <- CalculateReturns(amzn, method="log")
+
+amzn.ret_train <- CalculateReturns(amzn_train, method="log")    #this is the training set return 
+ 
+# remove first NA observation
+
+amzn.ret <- amzn.ret[-1,]
+
+amzn.ret_train <- amzn.ret_train[-1,]      # this is the training set return without NA term  
+
+####### from now on we work on the training set, except frecasting and specially noting 
+
+ 
+colnames(amzn.ret_train) <- "amzn"
+
+
+# plot returns 
+
+plot(amzn.ret_train)
+
+# plot returns with squared and absolute returns
+
+dataToPlot <- cbind(amzn.ret_train, amzn.ret_train^2, abs(amzn.ret_train))
+
+colnames(dataToPlot) <- c("Returns", "Returns^2", "abs(Returns)")
+
+plot.zoo(dataToPlot, main = "AMZN Daily Returns for Training set", col="blue")
+
+# plot autocorrelations of returns, returns^2 and abs(returns)
+
+acf(amzn.ret_train, main="AMZN Returns")
+
+acf(amzn.ret_train^2, main="AMZN Returns^2")
+
+acf(abs(amzn.ret_train), main="AMZN abs(Returns)")
+
+# compute summary statistics
+table.Stats(amzn.ret_train)
+
+ 
+# estimate the AR(1) model for returns
+
+n <- length(amzn.ret_train)
+
+x <- cbind(rep(1,n-1), coredata(amzn.ret_train)[-n])
+
+y <- coredata(amzn.ret_train)[-1]
+
+AR.coeff <- solve(t(x)%*%x) %*% t(x) %*% y   # those are the coefficients of the AR model
+
+AR.coeff
+
+lmtest <- lm(y~coredata(amzn.ret_train)[-n])
+
+summary(lmtest)
+
+AR.rsid <- resid(lmtest)
+
+acf(AR.rsid^2, main = "ACF for AR(1) squared residuals")
+
+LBtest <- function(x,k){
+  
+  n <- length(x)
+  
+  my_acf <- Acf(x)$acf
+  
+  sum_acf  <- 0 
+  
+  for (i in 1:k){
+    sum_acf <- sum_acf + (c(my_acf[i])^2)/(n-i)
+  }
+  
+  x_squared <- n*(n+2)*sum_acf
+  
+  p_value <- pchisq(x_squared,k) 
+  
+  cat("X_squared = ", x_squared,  ", df = ",k,  ", p-value = ", p_value)
+}
+
+Box.test(AR.rsid^2, lag = 12, type = c("Ljung-Box"))
+
+ArchTest(AR.rsid^2,5)     # Testing for ARCH/GARCH effects in returns
+
+Box.test(amzn.ret_train,12)
+
+ArchTest(amzn.ret_train)
+
+acf(amzn.ret_train,plot = F)
+
+# use ArchTest() function from FinTS package for Engle's LM test
+ArchTest(amzn.ret_train)
+
+# Estimate AR(1)-ARCH(3)
+#
+# specify ARCH(3) model with only constant in mean equation
+arch3.spec = ugarchspec(variance.model = list(garchOrder=c(3,0)),mean.model = list(armaOrder=c(1,0)))
+
+AMZN.arch3.fit = ugarchfit(spec=arch3.spec, data=amzn.ret_train,
+                           solver.control=list(trace = 1))  
+AMZN.arch3.fit
+
+ARCH3_coeff <- coef(AMZN.arch3.fit)
+
+ARCH3_stdres<-AMZN.arch3.fit@fit$z   #standardized residuals of ARCH(3) model
+
+Acf(ARCH3_stdres, main ="ACF of the standardized residuals from the ARCH 3")
+
+Acf(ARCH3_stdres^2,main="ACF of squared standardized residuals from the ARCH 3")
+
+
+# to plot the estimated standard deviation of the returns
+
+ARCH3_stdret<-AMZN.arch3.fit@fit$sigma
+
+plot(ARCH3_stdret, type = "l", main = " Estimated standard deviations of the returns from ARCH 3 ")
+
+
+# GARCH(1,1) model 
+garch11.spec = ugarchspec(variance.model = list(garchOrder=c(1,1)),mean.model = list(armaOrder=c(1,0)))
+
+AMZN.GARCH11.fit = ugarchfit(spec=garch11.spec, data=amzn.ret_train,
+                           solver.control=list(trace = 1))  
+AMZN.GARCH11.fit
+
+
+GARCH11_coeff <- coef(AMZN.GARCH11.fit)
+
+
+GARCH11_stdres<-AMZN.GARCH11.fit@fit$z   #standardized residuals of GARCH(1,1) model
+
+Acf(GARCH11_stdres, main ="ACF of the standardized residuals from the GARCH(1,1)")
+
+Acf(GARCH11_stdres^2,main="ACF of squared standardized residuals from the GARCH(1,1)")
+
+
+# to plot the estimated standard deviation of the returns
+
+GARCH11_stdret<-AMZN.GARCH11.fit@fit$sigma
+
+plot(GARCH11_stdret, type = "l", main = " Estimated standard deviations of the returns from GARCH(1,1)")
+
+
+# forecast return by AR(1)-ARCH(3)
+
+fore.ret <- rep(NA,50)
+
+n <- length(amzn.ret_train)
+
+fore.ret[1] <- ARCH3_coeff[1] + ARCH3_coeff[2]*amzn.ret_train[n]
+
+for (i in 2:50){
+  fore.ret[i] <- ARCH3_coeff[1] + ARCH3_coeff[2]*fore.ret[i-1]
+}
+
+
+plot(c(matrix(amzn.ret_train)[1706:n], fore.ret),type="l",col="red", main ="Last 4 month AR(1)-ARCH(3) Forecasts and realizations", ylab = "daily returns")
+ # here we got the last 4 months, that is 120 days daily returns. combine the real returns and the forecast
+par(new=T)
+
+plot(tail(amzn.ret,120), main = NULL)
+
+# calculate MSE for the forecasts
+error <- rep(NA, 50)
+
+for(i in 1:50){
+
+  error[i] <-  amzn.ret[ 1775+i] - fore.ret[i]
+  
+}
+
+MSE_fore_ARCH <- sum(error^2)/50
+
+MSE_fore_ARCH # this is the MSE for the forecasts from AR(1)-ARCH(3)
+
+
+
+# forecast return by AR(1)-GARCH(1,1)
+
+fore.ret[1] <- GARCH11_coeff[1] + GARCH11_coeff[2]*amzn.ret_train[n]
+
+for (i in 2:50){
+  fore.ret[i] <- GARCH11_coeff[1] + GARCH11_coeff[2]*fore.ret[i-1]
+}
+
+
+plot(c(matrix(amzn.ret_train)[1706:n], fore.ret),type="l",col="red", main ="Last 4 month AR(1)-GARCH(1,1) Forecasts and realizations", ylab = "daily returns")
+ # here we got the last 4 months, that is 120 days daily returns. combine the real returns and the forecast
+par(new=T)
+
+plot(tail(amzn.ret,120), main = NULL)
+
+# calculate MSE for the forecasts
+error <- rep(NA, 50)
+
+for(i in 1:50){
+
+  error[i] <-  amzn.ret[ 1775+i] - fore.ret[i]
+  
+}
+
+MSE_fore_GARCH <- sum(error^2)/50
+
+MSE_fore_GARCH # this is the MSE for the forecasts from AR(1)-GARCH(1,1)
+
+
+
+# use the AR(1)-GARCH(1,1) to forecast the variance 
+fore.var_garch <- rep(NA,50)                          # forecast the variance 
+
+n <- length(amzn.ret_train)
+
+fore.var_garch [1] <- GARCH11_coeff[3] + (GARCH11_coeff[4]+GARCH11_coeff[5])*(GARCH11_stdret[n]^2)
+
+for (i in 2:50){
+  fore.var_garch[i] <- GARCH11_coeff[3] + (GARCH11_coeff[4]+GARCH11_coeff[5])*(fore.var_garch[i-1])
+}   # this is the forecast of  variance  from GARCH(1,1) model 
+
+fore.std_garch <- sqrt(fore.var_garch)
+
+
+est.std_garch <- matrix(GARCH11_stdret[1706:n])
+
+
+plot(c(est.std_garch, fore.std_garch),main="Forecast and Estimated of the variance of GARCH(1,1)",type="l", xlab="Last 120 days" , ylab="standard variance")
+
+
+# Entire sample AR(1)-GARCH(1,1)==================
+  
+garch11.spec = ugarchspec(variance.model = list(garchOrder=c(1,1)),mean.model = list(armaOrder=c(1,0)))
+
+AMZN.GARCH11.ALL = ugarchfit(spec=garch11.spec, data=amzn.ret,
+                           solver.control=list(trace = 1))  
+AMZN.GARCH11.ALL
+
+GARCH11.ALL_coeff <- coef(AMZN.GARCH11.ALL)
+
+# plot the autocorelation of the std residuals and squared std residuals
+
+GARCH11.ALL_stdres <- AMZN.GARCH11.ALL@fit$z
+
+Acf(GARCH11.ALL_stdres,main="ACF of standardized residuals of AR(1)-GARCH(1,1) model for the entire sample")
+
+Acf(GARCH11.ALL_stdres^2,main="ACF of squared standardized residuals of AR(1)-GARCH(1,1) model for the entire sample")
+
+
+# estimated unconditional mean of the model
+
+Uncond_mean<-c(GARCH11.ALL_coeff[1]/(1-GARCH11.ALL_coeff[2]))
+
+cat("The estimated unconditional mean of the model is ",c(Uncond_mean))
+
+
+
+# estimated unconditional variance of the model
+
+Uncond_var<-GARCH11.ALL_coeff[3]/(1-GARCH11.ALL_coeff[4]-GARCH11.ALL_coeff[5])
+
+cat("The estimated unconditional variance of the model is ",c(Uncond_var))
+
+
+# half life 
+
+half_life <- log(0.5)/log(GARCH11.ALL_coeff[4]+GARCH11.ALL_coeff[5])
+
+cat("the half life of volatility is ",c(half_life)," days")
+
+
+# real forecasts  variance for the next 120 days 
+
+
+GARCH11.ALL_sigma <- AMZN.GARCH11.ALL@fit$sigma
+
+fore.var_all <- rep(NA,120)
+
+n <- length(amzn.ret)
+
+fore.var_all[1] <- GARCH11.ALL_coeff[3] + (GARCH11.ALL_coeff[4]+ GARCH11.ALL_coeff[5])*(GARCH11.ALL_sigma[n]^2)
+
+for (i in 2:120){
+  fore.var_all[i] <- GARCH11.ALL_coeff[3] + (GARCH11.ALL_coeff[4]+ GARCH11.ALL_coeff[5])*(fore.var_all[i-1])
+}
+
+fore.std_all <- sqrt(fore.var_all)
+
+
+# create a graph estimated the std up to Aprial 4 and forecasted std after April 4
+
+plot(c(fore.std_all), main="The forecasted standard derivation for 120 after April 4",type="l", xlab = "New 120 days", ylab="")
+
+
+plot(c(GARCH11.ALL_sigma[1710: n],fore.std_all), main=" Standard Deviation for real and forecasted ",type="l", xlab="Last 120 real and new 120 forecasts", ylab="standard deviation")
+ 
+
+
+# compute the VaR 5% one day , investment of $3,000,000
+
+new.ret <- c(GARCH11.ALL_coeff[1]+GARCH11.ALL_coeff[2]*amzn.ret[n])
+
+new.var <- c(GARCH11.ALL_coeff[3]+(GARCH11.ALL_coeff[4]+GARCH11.ALL_coeff[5])*GARCH11.ALL_sigma[n]^2)
+
+VaR_1day <- abs(3000000*(new.ret-1.645*sqrt(new.var)))
+
+cat("The VaR for 1 day 5% of investment of $3,000,000 is ",VaR_1day )
+```
+
+ 
