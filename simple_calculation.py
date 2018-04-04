@@ -12,10 +12,10 @@ print(sector_importance)
 
 sector_importance['weight'] = sector_importance['Market_Cap']/sector_importance['Market_Cap'].sum()
 
-sector_importance.plot(kind='hist')
+sector_importance = sector_importance.sort_values(by='weight', ascending=False)
+sector_importance.plot(x= 'sector' , y= 'weight' , kind='bar')
+
 plt.show()
-
-
 
 
 
