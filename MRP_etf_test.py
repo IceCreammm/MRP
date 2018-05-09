@@ -49,12 +49,13 @@ GSPC.plot()
 (GSPC - etf_spy).plot() # Plot the spread
 plt.axhline((GSPC - etf_spy).mean(), color='red', linestyle='--') # Add the mean
 plt.xlabel('Time')
-plt.legend(['Price Spread', 'Mean']);
+plt.legend(['Price Spread', 'Mean'])
 
 
+#================================ Test integration I(1) for every individual ETF==========================#
 
-
-
+for i in range(etf_adj_close.shape[1]):
+    print i
 
 
 
